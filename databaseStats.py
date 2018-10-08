@@ -3,9 +3,30 @@ import numpy as np
 import multiprocessing as mp
 from functools import partial
 import itertools
+from collections import Counter
 import sys
 sys.path.append('/vol/research/mammo2/will/python/usefulFunctions')
 import usefulFunctions as uf
+
+# Returns the mass classification of the ImageSOPIUID
+def mp_get_mass_classification(sheet_1, ImageSOPIUID):
+    #Get index
+    index = sheet_1['ImageSOPIUID']
+    index = index[index == ImageSOPIUID].index[0]
+    out = sheet_1['MassClassification'][index]
+    if pd.isnull(out):
+        out = 'nan'
+    return out
+
+# Returns the Conspicuity of the ImageSOPIUID
+def mp_get_conspicuity(sheet_1, ImageSOPIUID):
+    # Get index
+    index = sheet_1['ImageSOPIUID']
+    index = index[index == ImageSOPIUID].index[0]
+    out = sheet_1['Conspicuity'][index]
+    if pd.isnull(out):
+        out = 'nan'
+    return out
 
 
 # Should be passed ImageSOPIUID of unique lesions only to avoid repeated
@@ -41,7 +62,7 @@ def mp_get_contralateral(sheet_0, one_per_study, items):
     # Compute properties of contralateral
     # Search for all contralateral images
     # Through in an if statement incase we want one cont per StudyIUID
-    
+
     count, length, Image_SOPIUID = items
 
     #print('    ', count, '/', length)
@@ -87,7 +108,9 @@ def main():
                       'StudyIUID':0,
                       'ROIs':0,
                       'Unique ROIs':0,
-                      'Unique Contralaterals':0}
+                      'Unique Contralaterals':0,
+                      'Mass Classification':0,
+                      'Mass Conspicuity':0}
     stats = {}
     batch_numbers = [1, 3, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18, 19, 21,
                      22, 23, 30, 31, 32, 33, 40, 42, 43 , 44, 45, 46, 47, 48,
@@ -96,6 +119,8 @@ def main():
         stats.update({'batch ' + str(num): dict(stats_template)})
 
     # Load stats into stats
+    all_mass_clasification = []
+    all_mass_conspicuities = []
     for path in spreadsheet_paths:
         batch = 'batch ' + path.split('_')[1]
         print('Batch: ', batch)
@@ -103,9 +128,11 @@ def main():
         sheet_1 = pd.ExcelFile(path).parse(1)
 
         # Get ImageSOPIUID
+        print('    Getting ImageSOPIUIDs')
         stats[batch]['ImageSOPIUID'] = len(sheet_0['ImageSOPIUID'])
 
         # Get StudyIUID
+        print('    Getting StudyIUIDs')
         tmp_id = ''
         for id in sheet_0['StudyIUID'] :
             if id != tmp_id:
@@ -113,19 +140,22 @@ def main():
                 tmp_id = id
 
         # Get ROIs
+        print('    Getting ROIs')
         stats[batch]['ROIs'] = len(sheet_1['ImageSOPIUID'])
 
         # Get Unique ROIs
+        print('    Getting unique_ROIs')
         unique_ROIs = []
         tmp_ImageSOPIUID = ''
         for index, ImageSOPIUID in enumerate(sheet_1['StudyIUID']):
             if ImageSOPIUID != tmp_ImageSOPIUID:
                 unique_ROIs.append(sheet_1['ImageSOPIUID'][index])
                 tmp_ImageSOPIUID = ImageSOPIUID
-                stats[batch]['Unique ROIs'] = len(unique_ROIs)
+        stats[batch]['Unique ROIs'] = len(unique_ROIs)
 
         # Get contralaterals
         # Make sure only unique ROIs are used as args
+        print('    Getting contralaterals')
         func = partial(mp_get_contralateral, sheet_0, True)
         results = pool.map(
             func, list(zip(
@@ -135,13 +165,29 @@ def main():
         stats[batch]['Unique Contralaterals'] = sum(results)
 
         # Get mass classifications
+        func = partial(mp_get_mass_classification, sheet_1)
+        print('    Getting mass classifications')
+        results = pool.map(func, unique_ROIs)
+        stats[batch]['Mass Classification'] = Counter(results)
+        all_mass_clasification.extend(results)
+
+        #Get Conspicuity
+        func = partial(mp_get_conspicuity, sheet_1)
+        print('    Getting mass conspicuities')
+        results = pool.map(func, unique_ROIs)
+        stats[batch]['Mass Conspicuity'] = Counter(results)
+        all_mass_conspicuities.extend(results)
 
     # Total up the stats
     stats_total = dict(stats_template)
     for batch in stats:
         for single_stat in stats[batch]:
-            stats_total[single_stat] += stats[batch][single_stat]
-
+            try:
+                stats_total[single_stat] += stats[batch][single_stat]
+            except:
+                pass
+    stats_total['Mass Classification'] = Counter(all_mass_clasification)
+    stats_total['Mass Conspicuity'] = Counter(all_mass_conspicuities)
     # Print results
     for batch in stats:
         print(batch)
